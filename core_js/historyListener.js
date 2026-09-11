@@ -16,17 +16,25 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/*jshint esversion: 6 */
+/*jshint esversion: 8 */
 /*
 * This script is responsible for listen on history changes.
 * This technique is often used to inject tracking code into the location bar,
 * because all feature events will use the updated URL.
 */
 
+/**
+ * Kept for compatibility with genesis(); the listener is registered at load time
+ * (required for service workers) and checks the setting on every event.
+ */
 function historyListenerStart() {
-    if(storage.historyListenerEnabled) {
-        browser.webNavigation.onHistoryStateUpdated.addListener(historyCleaner);
-    }
+}
+
+/**
+ * Runs inside the page: replaces the current history entry with the cleaned URL.
+ */
+function replaceHistoryStateInPage(url) {
+    history.replaceState(null, "", url);
 }
 
 /**
@@ -37,19 +45,22 @@ function historyListenerStart() {
 * which is associated with the new history entry created by replaceState()
 */
 function historyCleaner(details) {
-    if(storage.globalStatus) {
-        const urlBefore = details.url;
-        const urlAfter = pureCleaning(details.url);
+    ready.then(() => {
+        if (!storage.historyListenerEnabled || !storage.globalStatus) return;
 
-        if(urlBefore !== urlAfter) {
-            browser.tabs.executeScript(details.tabId, {
-                frameId: details.frameId,
-                   code: 'history.replaceState(null,"",'+JSON.stringify(urlAfter)+');'
-            }).then(() => {}, onError);
+        const urlBefore = details.url;
+        const urlAfter = pureCleaning(urlBefore);
+
+        if (urlBefore !== urlAfter) {
+            return injectFunction(details.tabId, details.frameId, replaceHistoryStateInPage, [urlAfter]);
         }
-    }
+    }).catch(onError);
 }
 
 function onError(error) {
     console.log(`[ClearURLs] Error: ${error}`);
+}
+
+if (browser.webNavigation && browser.webNavigation.onHistoryStateUpdated) {
+    browser.webNavigation.onHistoryStateUpdated.addListener(historyCleaner);
 }

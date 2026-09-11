@@ -16,28 +16,50 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/*jshint esversion: 6 */
+/*jshint esversion: 8 */
 /*
 * This script is responsible to check in fixed intervals, that ClearURLs works properly.
 * In issue #203, some users reported, that ClearURLs filter function doesn't work after
 * some time, but without any recognizable reason.
 *
 * This watchdog restarts the whole Add-on, when the check fails.
+*
+* In a service worker (Manifest V3) timers do not survive, so the alarms API is used.
+* The same alarm mechanism also triggers a periodic rule update check.
 */
 const CHECK_INTERVAL = 60000;
+const WATCHDOG_ALARM = "clearurls-watchdog";
+const RULE_UPDATE_ALARM = "clearurls-rule-update";
 const __dirtyURL = "https://clearurls.roebert.eu?utm_source=addon";
 const __cleanURL = new URL("https://clearurls.roebert.eu").toString();
 
-setInterval(function() {
-    if(isStorageAvailable() && storage.globalStatus) {
-        if(new URL(pureCleaning(__dirtyURL, true)).toString() !== __cleanURL) {
+function watchdogCheck() {
+    if (!isReady || !providers.length) return;
+
+    if (isStorageAvailable() && storage.globalStatus) {
+        if (new URL(pureCleaning(__dirtyURL, true)).toString() !== __cleanURL) {
             storage.watchDogErrorCount += 1;
             console.log(translate('watchdog', storage.watchDogErrorCount));
             saveOnExit();
-            if(storage.watchDogErrorCount < 3) reload();
-        } else if(storage.watchDogErrorCount > 0){
+            if (storage.watchDogErrorCount < 3) reload();
+        } else if (storage.watchDogErrorCount > 0) {
             storage.watchDogErrorCount = 0;
             saveOnExit();
         }
     }
-}, CHECK_INTERVAL);
+}
+
+if (browser.alarms) {
+    browser.alarms.create(WATCHDOG_ALARM, {periodInMinutes: 1});
+    browser.alarms.create(RULE_UPDATE_ALARM, {periodInMinutes: 60});
+
+    browser.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name === WATCHDOG_ALARM) {
+            ready.then(watchdogCheck).catch(handleError);
+        } else if (alarm.name === RULE_UPDATE_ALARM) {
+            ready.then(() => checkRules(true)).catch(handleError);
+        }
+    });
+} else {
+    setInterval(watchdogCheck, CHECK_INTERVAL);
+}
