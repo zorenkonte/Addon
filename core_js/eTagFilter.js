@@ -68,8 +68,11 @@ function generateDummyEtag(len, quotes = true, w = false) {
 /**
  * Since Firefox 85, eTags can no longer be 
  * used for tracking users over multiple sites.
+ *
+ * Chrome (Manifest V3) cannot modify headers from a listener;
+ * core_js/dnr.js registers a declarativeNetRequest rule instead.
  */
-if(getBrowser() !== "Firefox") {
+if(getBrowser() !== "Firefox" && supportsBlockingWebRequest()) {
     browser.webRequest.onHeadersReceived.addListener(
         eTagFilter,
         {urls: ["<all_urls>"]},

@@ -24,6 +24,14 @@ var storage = [];
 var hasPendingSaves = false;
 var pendingSaves = new Set();
 
+// Resolves once the storage has been loaded (event handlers wait for it,
+// because a Manifest V3 service worker may be woken up by any event).
+var isReady = false;
+var readyResolve;
+const ready = new Promise((resolve) => {
+    readyResolve = resolve;
+});
+
 /**
  * Writes the storage variable to the disk.
  */
@@ -86,12 +94,14 @@ function saveOnDisk(keys) {
 }
 
 /**
- * Schedule to save a key to disk in 30 seconds.
+ * Schedule to save a key to disk in 10 seconds
+ * (short enough to survive the idle timeout of a service worker).
  * @param  {String} key
  */
 function deferSaveOnDisk(key) {
+    pendingSaves.add(key);
+
     if (hasPendingSaves) {
-        pendingSaves.add(key);
         return;
     }
 
@@ -99,7 +109,7 @@ function deferSaveOnDisk(key) {
         saveOnDisk(Array.from(pendingSaves));
         pendingSaves.clear();
         hasPendingSaves = false;
-    }, 30000);
+    }, 10000);
     hasPendingSaves = true;
 }
 
@@ -121,7 +131,10 @@ function genesis() {
 
         // Start history listener
         historyListenerStart();
-    }, handleError);
+    }, handleError).finally(() => {
+        isReady = true;
+        readyResolve();
+    });
 }
 
 /**
@@ -183,6 +196,11 @@ function setData(key, value) {
         default:
             storage[key] = value;
     }
+
+    if (typeof DNR_RELEVANT_KEYS !== "undefined" && DNR_RELEVANT_KEYS.includes(key)
+        && typeof scheduleDNRSync === "function") {
+        scheduleDNRSync();
+    }
 }
 
 /**
@@ -219,12 +237,13 @@ function initSettings() {
     storage.contextMenuEnabled = true;
     storage.historyListenerEnabled = true;
     storage.localHostsSkipping = true;
-    storage.referralMarketing = true;
+    storage.referralMarketing = false;
     storage.logLimit = 100;
     storage.domainBlocking = true;
     storage.pingBlocking = true;
     storage.eTagFiltering = false;
     storage.watchDogErrorCount = 0;
+    storage.lastRuleCheck = 0;
 
     if (getBrowser() === "Firefox") {
         storage.types = ["font", "image", "imageset", "main_frame", "media", "object", "object_subrequest", "other", "script", "stylesheet", "sub_frame", "websocket", "xml_dtd", "xmlhttprequest", "xslt"];

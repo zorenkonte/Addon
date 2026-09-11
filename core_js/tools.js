@@ -73,12 +73,57 @@ function reload() {
  */
 async function checkOSAndroid() {
     if (os === undefined || os === null || os === "") {
-        await chrome.runtime.getPlatformInfo(function (info) {
+        try {
+            const info = await browser.runtime.getPlatformInfo();
             os = info.os;
-        });
+        } catch (e) {
+            os = "unknown";
+        }
     }
 
     return os === "android";
+}
+
+/**
+ * Returns the toolbar button API (action in Manifest V3, browserAction in Manifest V2).
+ */
+function getActionAPI() {
+    return browser.action || browser.browserAction;
+}
+
+/**
+ * Returns true if blocking webRequest listeners can be registered
+ * (Firefox / Manifest V2). Chrome Manifest V3 uses declarativeNetRequest instead.
+ */
+function supportsBlockingWebRequest() {
+    const permissions = browser.runtime.getManifest().permissions || [];
+    return permissions.includes("webRequestBlocking")
+        && !!(browser.webRequest && browser.webRequest.onBeforeRequest);
+}
+
+/**
+ * Runs a function inside a tab (scripting API in Manifest V3, tabs.executeScript otherwise).
+ * The function must be self-contained; the arguments must be JSON-serializable.
+ *
+ * @param {number} tabId
+ * @param {number|undefined} frameId
+ * @param {Function} func
+ * @param {Array} args
+ * @return {Promise}
+ */
+function injectFunction(tabId, frameId, func, args = []) {
+    if (browser.scripting && browser.scripting.executeScript) {
+        const target = {tabId: tabId};
+        if (typeof frameId === "number" && frameId > 0) target.frameIds = [frameId];
+
+        return browser.scripting.executeScript({target: target, func: func, args: args});
+    }
+
+    const code = "(" + func.toString() + ")(" + args.map(a => JSON.stringify(a)).join(",") + ");";
+    const details = {code: code};
+    if (typeof frameId === "number") details.frameId = frameId;
+
+    return browser.tabs.executeScript(tabId, details);
 }
 
 /**
@@ -181,9 +226,9 @@ function changeIcon() {
     checkOSAndroid().then((res) => {
         if (!res) {
             if (storage.globalStatus) {
-                browser.browserAction.setIcon({path: "img/clearurls_128x128.png"}).catch(handleError);
+                getActionAPI().setIcon({path: "img/clearurls_128x128.png"}).catch(handleError);
             } else {
-                browser.browserAction.setIcon({path: "img/clearurls_gray_128x128.png"}).catch(handleError);
+                getActionAPI().setIcon({path: "img/clearurls_gray_128x128.png"}).catch(handleError);
             }
         }
     });
@@ -200,13 +245,13 @@ function setBadgedStatus() {
             let color = storage.badged_color;
             if (storage.badged_color.charAt(0) !== '#')
                 color = '#' + storage.badged_color;
-            browser.browserAction.setBadgeBackgroundColor({
+            getActionAPI().setBadgeBackgroundColor({
                 'color': color
             }).catch(handleError);
 
             // Works only in Firefox: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/browserAction/setBadgeTextColor#Browser_compatibility
             if (getBrowser() === "Firefox") {
-                browser.browserAction.setBadgeTextColor({
+                getActionAPI().setBadgeTextColor({
                     color: "#FFFFFF"
                 }).catch(handleError);
             }
@@ -219,14 +264,15 @@ function setBadgedStatus() {
  * @return {String} [description]
  */
 function getCurrentURL() {
-    return currentURL;
+    return typeof currentURL !== "undefined" ? currentURL : null;
 }
 
 /**
  * Check for browser.
  */
 function getBrowser() {
-    if (typeof InstallTrigger !== 'undefined') {
+    if (typeof InstallTrigger !== 'undefined'
+        || (typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent))) {
         return "Firefox";
     } else {
         return "Chrome";

@@ -16,26 +16,36 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/*jshint esversion: 6 */
+/*jshint esversion: 8 */
 /*
  * This script is responsible for the communication between background and content_scripts.
  */
 
 /**
- * [handleMessage description]
+ * Handles a message from the popup, the settings page or other extension pages.
+ * The message names a global background function and its parameters.
+ *
+ * Waits until the storage has been loaded (service worker may have just woken up).
+ *
  * @param  request      The message itself. This is a JSON-ifiable object.
  * @param  sender       A runtime.MessageSender object representing the sender of the message.
- * @param  sendResponse A function to call, at most once, to send a response to the message. The function takes a single argument, which may be any JSON-ifiable object. This argument is passed back to the message sender.
+ * @return {Promise<{response: *}>}
  */
-function handleMessage(request, sender, sendResponse)
-{
-    let fn = window[request.function];
+async function handleMessage(request, sender) {
+    await ready;
 
-    if(typeof fn === "function")
-    {
-        let response = fn.apply(null, request.params);
+    const fn = globalThis[request.function];
 
-        return Promise.resolve({response});
+    if (typeof fn !== "function") {
+        return {response: undefined};
+    }
+
+    try {
+        const response = await fn.apply(null, request.params || []);
+        return {response};
+    } catch (error) {
+        handleError(error);
+        return {response: undefined, error: String(error)};
     }
 }
 
